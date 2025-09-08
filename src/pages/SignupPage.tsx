@@ -38,13 +38,17 @@ import {
 /* =============================================================================
    Nickname validation & check
 ============================================================================= */
-const NICK_RE = /^[A-Za-z0-9가-힣_]{2,16}$/;
+const NICK_MIN = 2;
+const NICK_MAX = 16;
+const NICK_RE = new RegExp(`^[A-Za-z0-9가-힣_]{${NICK_MIN},${NICK_MAX}}$`);
+
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PASS_MIN = 6;
 
 function validateNicknameLocal(nick: string): string | null {
   if (!nick) return "닉네임을 입력해 주세요";
-  if (!NICK_RE.test(nick)) return "2~16자, 영문/숫자/한글/_(언더스코어)만 허용";
+  if (!NICK_RE.test(nick))
+    return `${NICK_MIN}~${NICK_MAX}자, 영문/숫자/한글/_(언더스코어)만 허용`;
   return null;
 }
 
@@ -142,46 +146,64 @@ export default function SignupPage() {
     try {
       setLoading(true);
 
-      // 1) 회원가입
-      const { data, error } = await supabase.auth.signUp({
+      // 1) signUp
+      const { error: err1 } = await supabase.auth.signUp({
         email: emailNorm,
         password,
         options: { data: { nickname: nick } },
       });
-      if (error) throw error;
+      if (err1) throw err1;
 
-      let userId = data.user?.id ?? null;
-
-      // 세션이 없다면 로그인 시도
-      if (!userId) {
-        const { data: s2, error: e2 } = await supabase.auth.signInWithPassword({
-          email: emailNorm,
-          password,
-        });
-        if (e2) throw e2;
-        userId = s2.user?.id ?? null;
+      // 2) 세션 확보 (없으면 로그인)
+      let { data: s } = await supabase.auth.getSession();
+      if (!s.session) {
+        const { data: s2, error: err2 } =
+          await supabase.auth.signInWithPassword({
+            email: emailNorm,
+            password,
+          });
+        if (err2) throw err2;
+        s = { session: s2.session };
       }
-      if (!userId) throw new Error("로그인 세션을 확보하지 못했습니다.");
+      const userId = s.session?.user?.id;
+      if (!userId) throw new Error("AUTH_SESSION_MISSING");
 
-      // 2) app_users 보정
-      const { error: upErr } = await supabase
-        .from("app_users")
-        .upsert({ id: userId, nickname: nick }, { onConflict: "id" });
-      if (upErr) throw upErr;
+      // 3) app_users 보정: 실패해도 이동은 하도록 try/catch 분리
+      try {
+        const { error: upErr } = await supabase
+          .from("app_users")
+          .upsert(
+            { id: userId, nickname: nick },
+            { onConflict: "id" /*, returning: "minimal"*/ }
+          );
+        if (upErr) throw upErr;
+      } catch (e: any) {
+        console.error("app_users upsert error:", e);
+        toast.error(
+          `프로필 초기화 실패(나중에 다시 시도 가능): ${e?.message ?? e}`
+        );
+      }
 
       toast.success("회원가입 완료! 환영합니다 🐟");
+      // 4) 리다이렉트는 항상 수행 (UPSERT 실패해도)
       window.location.assign("/login");
     } catch (err: any) {
-      const msg = String(err?.message ?? err);
-      // 실패 토스트 명확히
-      if (msg.toLowerCase().includes("already registered")) {
+      console.error("signup flow error:", err);
+      const m = String(err?.message ?? err).toLowerCase();
+      if (m.includes("already registered")) {
         toast.error("이미 가입된 이메일입니다. 로그인해 주세요.");
-      } else if (msg.toLowerCase().includes("password")) {
+      } else if (m.includes("password")) {
         toast.error("비밀번호는 최소 6자 이상이어야 합니다.");
-      } else if (msg.toLowerCase().includes("invalid email")) {
+      } else if (m.includes("invalid email")) {
         toast.error("이메일 형식이 올바르지 않습니다.");
+      } else if (
+        m.includes("permission") ||
+        m.includes("rls") ||
+        m.includes("policy")
+      ) {
+        toast.error("권한 오류: DB 권한/정책을 점검해 주세요.");
       } else {
-        toast.error(`회원가입 실패: ${msg}`);
+        toast.error(`회원가입 실패: ${err?.message ?? err}`);
       }
     } finally {
       setLoading(false);
@@ -292,8 +314,11 @@ export default function SignupPage() {
                   id="su-nick"
                   value={nickname}
                   onChange={(e) => setNickname(e.target.value)}
-                  placeholder="2~16자, 영문/숫자/한글/_"
+                  placeholder={`${NICK_MIN}~${NICK_MAX}자, 영문/숫자/한글/_`}
                   autoComplete="off"
+                  maxLength={NICK_MAX} // ✅ 길이 제한
+                  aria-describedby="nick-help nick-count"
+                  inputMode="text"
                 />
                 {status === "checking" && (
                   <Loader2 className="h-4 w-4 animate-spin text-sky-500" />
@@ -308,9 +333,20 @@ export default function SignupPage() {
                   <AlertCircle className="h-4 w-4 text-amber-600" />
                 )}
               </div>
+
               {!!message && (
-                <div className={cn("text-xs", nickTone)}>{message}</div>
+                <div id="nick-help" className={cn("text-xs", nickTone)}>
+                  {message}
+                </div>
               )}
+
+              {/* ✅ 실시간 글자 수 */}
+              <div
+                id="nick-count"
+                className="ml-auto text-[11px] tabular-nums text-muted-foreground"
+              >
+                {nickname.length}/{NICK_MAX}
+              </div>
             </div>
 
             {/* 파란 배경 + 흰 글자 버튼, 조건 만족 시만 활성화 */}

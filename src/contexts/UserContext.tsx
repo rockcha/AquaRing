@@ -40,6 +40,7 @@ async function fetchProfile(userId: string): Promise<AppUser | null> {
 }
 
 // ===== Provider =====
+
 export function UserProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = React.useState<
     import("@supabase/supabase-js").Session | null
@@ -115,11 +116,28 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     [user, refresh]
   );
 
+  // contexts/UserContext.tsx
   const signOut = React.useCallback(async () => {
-    await supabase.auth.signOut();
+    // 1) 로컬 상태를 즉시 비웁니다. (라우트 가드가 바로 비활성화됨)
     setProfile(null);
     setUser(null);
     setSession(null);
+
+    // 2) Supabase 세션/스토리지 정리 (네트워크에 묶이지 않게 처리)
+    try {
+      if (typeof (supabase.auth.signOut as any) === "function") {
+        // scope 옵션이 없는 버전이라도 try/catch 로 안전하게 처리
+        await Promise.race([
+          // scope: 'local' 이 지원되면 이게 가장 안전/빠름
+          // (미지원이면 일반 signOut 이 호출됨)
+          (supabase.auth as any).signOut?.({ scope: "local" }) ??
+            supabase.auth.signOut(),
+          new Promise<void>((resolve) => setTimeout(resolve, 800)), // 타임아웃 가드
+        ]);
+      }
+    } catch {
+      // 네트워크 실패/토큰만료 등은 무시 (이미 로컬 상태는 비워졌음)
+    }
   }, []);
 
   const value: Ctx = {

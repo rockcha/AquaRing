@@ -17,7 +17,7 @@ import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, UserPlus, Check, X, Ban, Users } from "lucide-react";
 
-import { FriendService, type FriendEdge, type FriendStatus } from "./friends";
+import { FriendService, type FriendEdge } from "./friends";
 
 /* ----------------------- 유틸 ----------------------- */
 function fmt(t?: string | null) {

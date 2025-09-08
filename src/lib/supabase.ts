@@ -17,3 +17,9 @@ export const supabase = createClient(url, anon, {
 });
 
 export default supabase;
+
+// 토큰이 바뀔 때마다 Realtime에도 반영
+supabase.auth.onAuthStateChange((_evt, session) => {
+  const token = session?.access_token || "";
+  supabase.realtime.setAuth(token);
+});
